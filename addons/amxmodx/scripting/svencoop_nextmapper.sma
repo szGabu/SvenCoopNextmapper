@@ -20,6 +20,9 @@
 #define RELAY_ENTNAME					"trigger_relay"
 #define RELAY_TARGETNAME				"amxx_nextmapper_utsuhoreuiji"
 
+#define GAMEEND_ENTNAME					"game_end"
+#define GAMEEND_TARGETNAME				"amxx_nextmapper_sanaekochiya"
+
 #define BEACON_MODEL                    "models/w_adrenaline.mdl"
 #define BEACON_CLASSNAME                "trigger_changelevel_beacon"
 
@@ -50,13 +53,15 @@ new g_bOldMap = false;
 new g_bDebugAlwaysWait = false;
 new g_hPlayerState[MAX_PLAYERS+1] = {-1, ...};
 new g_hLastExitUsed = 0;
-new g_hRelayEnt = 0;
+new g_hRelayEnt = 0, g_hGameEndEnt = 0;
 new g_hBeaconEnt[MAX_PLAYERS+1] = {-1, ...};
 new g_hScreenFadeMessage = 0;
 new g_bGalileoRunning = false;
 new bool:g_bAmxxSurvivalModeEnabled = false;
 new bool:g_bShouldSpawnNormally = false;
+new g_iShouldTransitionNowTo = -1;
 new Float:g_fSecondsPassed = 0.0;
+new Array:g_aInexistingMapExits;
 
 public plugin_init()
 {
@@ -165,6 +170,29 @@ public plugin_cfg()
     }
 }
 
+public pfn_keyvalue(iEnt)
+{
+    new szClassname[32], szKeyName[32], szKeyValue[32];
+    copy_keyvalue(szClassname, charsmax(szClassname), szKeyName, charsmax(szKeyName), szKeyValue, charsmax(szKeyValue));
+    if(equali(szClassname, CHANGELEVEL_CLASSNAME))
+    {
+        if(equali(szKeyName, "map"))
+        {
+            new szMapPath[PLATFORM_MAX_PATH];
+            formatex(szMapPath, charsmax(szMapPath), "maps/%s.bsp", szKeyValue);
+            if(!file_exists(szMapPath, true))
+            {
+                server_print("[ALERT] svencoop_nextmapper.amxx::pfn_keyvalue() - Map %s missing from the maps folder. Exit will be treated as game end.", szKeyValue);
+
+                if(_:g_aInexistingMapExits == 0)
+                    g_aInexistingMapExits = ArrayCreate();
+
+                ArrayPushCell(g_aInexistingMapExits, iEnt);
+            }
+        }
+    }
+}
+
 public OnConfigsExecuted()
 {
     if(g_iPluginFlags & AMX_FLAG_DEBUG)
@@ -181,11 +209,14 @@ public OnConfigsExecuted()
  */
 public SetupNeededEnts()
 {
-	g_hRelayEnt = engfunc(EngFunc_CreateNamedEntity, engfunc(EngFunc_AllocString, RELAY_ENTNAME));
-	dllfunc(DLLFunc_Spawn, g_hRelayEnt);
-	set_pev(g_hRelayEnt, pev_targetname, RELAY_TARGETNAME);
+    g_hRelayEnt = engfunc(EngFunc_CreateNamedEntity, engfunc(EngFunc_AllocString, RELAY_ENTNAME));
+    dllfunc(DLLFunc_Spawn, g_hRelayEnt);
+    set_pev(g_hRelayEnt, pev_targetname, RELAY_TARGETNAME);
 
-	server_print("[NOTICE] %s is free to download and distribute! If you paid for this plugin YOU GOT SCAMMED. Visit https://github.com/szGabu for all my plugins.", PLUGIN_NAME);
+    g_hGameEndEnt = engfunc(EngFunc_CreateNamedEntity, engfunc(EngFunc_AllocString, GAMEEND_ENTNAME));
+    set_pev(g_hGameEndEnt, pev_targetname, GAMEEND_TARGETNAME);
+
+    server_print("[NOTICE] %s is free to download and distribute! If you paid for this plugin YOU GOT SCAMMED. Visit https://github.com/szGabu for all my plugins.", PLUGIN_NAME);
 }
 
 public client_disconnected(iClient)
@@ -302,7 +333,15 @@ Player_CreateTransitionBeacon(iClient, iExit)
 
 public Event_Touch_Pre(iEnt, iOther)
 {
-    if(iEnt && iOther && iEnt >= MaxClients && iOther <= MaxClients)
+    if(g_iShouldTransitionNowTo == iEnt)
+    {
+        if(ArrayFindValue(g_aInexistingMapExits, iEnt) >= 0)
+            ExecuteHamB(Ham_Use, g_hGameEndEnt, g_hGameEndEnt, g_hGameEndEnt, 1, 1.0);
+        else
+            return FMRES_IGNORED;
+    }
+
+    if(iEnt && iOther && iEnt >= MaxClients && iOther <= MaxClients && pev_valid(iEnt) == 2 && pev_valid(iOther) == 2)
     {
         new sClassname[32];
         pev(iEnt, pev_classname, sClassname, charsmax(sClassname));
@@ -319,7 +358,7 @@ public LevelEnd_ByTouch(iEnt, iOther)
 {
     //blocked back transition
     if(pev(iEnt, pev_solid) == SOLID_BSP) 
-        return HAM_IGNORED;
+        return FMRES_IGNORED;
 
     if(pev(iEnt, pev_spawnflags) & SF_CHANGELEVEL_USEONLY == 0 && (iOther > 0 && iOther <= MaxClients))
     {
@@ -342,10 +381,10 @@ public LevelEnd_ByTouch(iEnt, iOther)
         if(g_hPlayerState[iOther] == -1)
             player_reached_endmap(iOther, iEnt, false);
 
-        return HAM_SUPERCEDE;
+        return FMRES_SUPERCEDE;
     }
     
-    return HAM_IGNORED;
+    return FMRES_IGNORED;
 }
 
 public LevelEnd_ByTouchBeaconPlayer(iEnt, iOther)
@@ -369,6 +408,9 @@ public LevelEnd_ByTouchBeaconPlayer(iEnt, iOther)
 
 public LevelEnd_ByUse(iEnt, iCaller, iActivator, iUseType, Float:fValue)
 {
+    if(pev_valid(iEnt) != 2 || pev_valid(iCaller) != 2)
+        return HAM_IGNORED;
+
     if(pev(iEnt, pev_solid) == SOLID_BSP)
         return HAM_IGNORED;
 
@@ -547,7 +589,7 @@ FadeOut()
 {
     for(new iClient = 1; iClient <= MaxClients; iClient++)
     {
-        if(is_user_connected(iClient))
+        if(is_user_connected(iClient) && pev_valid(iClient) == 2)
         {
             client_print(iClient, print_center, "");
             message_begin(MSG_ONE, g_hScreenFadeMessage, _, iClient);
@@ -618,7 +660,7 @@ public end_map()
         new iUser = 0;
         for(new iClient=1;iClient <= MaxClients;iClient++)
         {
-            if(is_user_connected(iClient) && is_user_alive(iClient))
+            if(is_user_connected(iClient) && is_user_alive(iClient) && pev_valid(iClient) == 2)
             {
                 iUser = iClient;
                 break;
@@ -630,20 +672,20 @@ public end_map()
             if(g_iPluginFlags & AMX_FLAG_DEBUG)
                 server_print("[DEBUG] svencoop_nextmapper.amxx::end_map() - EXECUTED CHANGELEVEL");
 
-            ExecuteHam(Ham_Use, iDesiredChangelevelEnt, g_hRelayEnt, g_hRelayEnt, 1, 0.0);
+            g_iShouldTransitionNowTo = iDesiredChangelevelEnt; //this makes the fmres touch to actually go through
 
-            // sven coop now crashes when multiple changelevels occur in the same frame:
-            // ExecuteHam(Ham_Touch, iDesiredChangelevelEnt, g_hRelayEnt);
-            // ExecuteHam(Ham_Use, iDesiredChangelevelEnt, iUser, iUser, 1, 0.0);
-            // ExecuteHam(Ham_Touch, iDesiredChangelevelEnt, iUser);
-            if(g_iPluginFlags & AMX_FLAG_DEBUG)
+            for(new iClient=1;iClient <= MaxClients;iClient++)
             {
-                server_print("[DEBUG] svencoop_nextmapper.amxx::end_map() - Failed to changelevel? ");
-                server_print("[DEBUG] svencoop_nextmapper.amxx::end_map() - Debug iDesiredChangelevelEnt:");
-                new sClassname[32];
-                pev(iDesiredChangelevelEnt, pev_classname, sClassname, charsmax(sClassname));
-                server_print("[DEBUG] svencoop_nextmapper.amxx::end_map() - classname: %s", sClassname);
+                if(is_user_connected(iClient) && is_user_alive(iClient) && pev_valid(iClient) == 2)
+                {
+                    set_pev(iClient, pev_flags, pev(iClient, pev_flags) & ~(FL_FROZEN | FL_GODMODE | FL_NOTARGET | FL_NOWEAPONS | FL_DORMANT));
+                    set_pev(iClient, pev_solid, SOLID_SLIDEBOX);
+                    set_pev(iClient, pev_movetype, MOVETYPE_WALK);
+                }
             }
+
+            ExecuteHam(Ham_Use, iDesiredChangelevelEnt, g_hRelayEnt, g_hRelayEnt, 1, 0.0);
+            ExecuteHam(Ham_Use, iDesiredChangelevelEnt, iUser, iUser, 1, 0.0);
         }
         else
         {
@@ -680,7 +722,7 @@ public FreezePlayer(iClient)
     if(g_iPluginFlags & AMX_FLAG_DEBUG)
         server_print("[DEBUG] svencoop_nextmapper.amxx::FreezePlayer() - Called on Player %d", iClient);
     
-    if(is_user_connected(iClient))
+    if(is_user_connected(iClient) && pev_valid(iClient) == 2)
         set_pev(iClient, pev_flags, pev(iClient, pev_flags) | FL_FROZEN | FL_GODMODE | FL_NOTARGET);
 }
 
