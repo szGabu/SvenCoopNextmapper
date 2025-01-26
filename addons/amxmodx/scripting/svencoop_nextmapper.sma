@@ -45,7 +45,7 @@
 #pragma dynamic     32768
 #pragma semicolon   1
 
-new g_cvarEnabled, g_cvarAntiRush, g_cvarAntiRushWaitStart, g_cvarAntiRushWaitEnd, g_cvarAntiRushEndPercentage, g_cvarAntiRushIgnoreBots;
+new g_cvarEnabled, g_cvarAntiRush, g_cvarAntiRushWaitStart, g_cvarAntiRushWaitEnd, g_cvarAntiRushEndPercentage, g_cvarAntiRushIgnoreBots, g_cvarMapManagerPlugin;
 new g_cvarSurvivalEnabled;
 new g_iPluginFlags, g_iMapState = ANTIRUSH_STATE_INVALID;
 new g_sDesiredNextMap[64];
@@ -56,11 +56,11 @@ new g_hLastExitUsed = 0;
 new g_hRelayEnt = 0, g_hGameEndEnt = 0;
 new g_hBeaconEnt[MAX_PLAYERS+1] = {-1, ...};
 new g_hScreenFadeMessage = 0;
-new g_bGalileoRunning = false;
 new bool:g_bAmxxSurvivalModeEnabled = false;
 new bool:g_bShouldSpawnNormally = false;
 new g_iShouldTransitionNowTo = -1;
 new Float:g_fSecondsPassed = 0.0;
+new g_szMapManagerPlugin[MAX_NAME_LENGTH] = "";
 new Array:g_aInexistingMapExits;
 
 public plugin_init()
@@ -77,6 +77,7 @@ public plugin_init()
     g_cvarAntiRushWaitEnd = register_cvar("amx_sven_antirush_wait_end", "60.0");
     g_cvarAntiRushEndPercentage = register_cvar("amx_sven_antirush_end_percentage", "80.0");
     g_cvarAntiRushIgnoreBots = register_cvar("amx_sven_antirush_ignore_bots", "0");
+    g_cvarMapManagerPlugin = register_cvar("amx_sven_antirush_map_manager_plugin", "");
     g_cvarSurvivalEnabled = get_cvar_pointer("mp_survival_mode");
 
     register_cvar("amx_sven_nextmapper_version", PLUGIN_VERSION);
@@ -86,8 +87,6 @@ public plugin_init()
 
     register_clcmd("gibme", "PlayerCmd_Suicide");
     register_clcmd("kill", "PlayerCmd_Suicide");
-
-    g_bGalileoRunning = get_cvar_pointer("gal_srv_start") != 0;
 
     if(g_iPluginFlags & AMX_FLAG_DEBUG)
         g_bDebugAlwaysWait = DEBUG_ALWAYS_WAIT;
@@ -166,6 +165,8 @@ public plugin_cfg()
             set_task(1.0, "clock_function", _, _, _, "b");
 
             SetupNeededEnts();
+
+            get_pcvar_string(g_cvarMapManagerPlugin, g_szMapManagerPlugin, charsmax(g_cvarMapManagerPlugin));
         }
     }
 }
@@ -258,16 +259,6 @@ public client_putinserver(iClient)
         }
 
         g_iMapState = ANTIRUSH_STATE_INIT;
-
-        if(g_bGalileoRunning)
-        {
-            //prevent players from rtv'ing in ANTIRUSH_STATE_INIT phase
-            if(g_iPluginFlags & AMX_FLAG_DEBUG)
-                server_print("[DEBUG] svencoop_nextmapper.amxx::client_putinserver() - Trying to pause Galileo");
-
-            pause("ac", "galileo.amxx");
-            server_exec();
-        }
     }
 }
 
@@ -442,14 +433,14 @@ public LevelEnd_ByUse(iEnt, iCaller, iActivator, iUseType, Float:fValue)
         
             if(equal(sClassname, GAME_END_CLASSNAME))
             {
-                if(g_bGalileoRunning)
+                if(strlen(g_szMapManagerPlugin) > 0)
                 {
-                    // ugly hack to prevent addons_zz's Galileo to 
+                    // ugly hack to prevent a map manager to 
                     // trigger a votemap when we are waiting for players
                     if(g_iPluginFlags & AMX_FLAG_DEBUG)
                         server_print("[DEBUG] svencoop_nextmapper.amxx::LevelEnd_ByUse() - Trying to pause Galileo");
 
-                    pause("ac", "galileo.amxx");
+                    pause("ac", g_szMapManagerPlugin);
                     server_exec();
                 }
             }
@@ -500,13 +491,13 @@ public clock_function()
 
                 FadeOut();
 
-                if(g_bGalileoRunning)
+                if(strlen(g_szMapManagerPlugin) > 0)
                 {
-                   //we are in ANTIRUSH_STATE_MIDGAME, we must resume galileo
+                   //we are in ANTIRUSH_STATE_MIDGAME, we must resume the map manager
                    if(g_iPluginFlags & AMX_FLAG_DEBUG)
                        server_print("[DEBUG] svencoop_nextmapper.amxx::clock_function() - Trying to unpause Galileo");
                 
-                   unpause("ac", "galileo.amxx");
+                   unpause("ac", g_szMapManagerPlugin);
                 }
 
                 if(g_bAmxxSurvivalModeEnabled)
