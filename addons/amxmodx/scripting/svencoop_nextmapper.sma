@@ -8,10 +8,6 @@
 #pragma semicolon   1
 #pragma dynamic     32768
 
-//RequestFrame does not work properly (https://github.com/alliedmodders/amxmodx/issues/1039) 
-//This is the next best thing, do not blame me
-#define TECHNICAL_IMMEDIATE    			0.1
-
 #define TASKID_CLOCKFUNCTION			177784
 #define TASKID_FREEZEPLAYER			    248778
 #define TASKID_RECHECKPLAYERCOUNT       318779
@@ -27,7 +23,7 @@
 #define FL_NOWEAPONS                    (1<<27)
 
 // Custom Flags
-#define FL_PLAYERBEACON                 (1<<31)
+#define FL_PLAYERBEACON                 512
 
 // Svengine
 #define SVENGINE_MAX_EDICS              8192
@@ -39,19 +35,6 @@
 #define BEACON_CLASSNAME                "trigger_changelevel_beacon"
 
 #define DEBUG_ALWAYS_WAIT               false
-
-#if AMXX_VERSION_NUM < 183
-#define PLATFORM_MAX_PATH               256
-#define MAX_PLAYERS                     32
-#define MAX_NAME_LENGTH                 32
-#define MaxClients                      get_maxplayers()
-#define __BINARY__                      "svencoop_nextmapper.amxx"
-#define get_pcvar_bool(%1) 	            (get_pcvar_num(%1) == 1)
-#define find_player_ex(%1)			    (find_player(%1))
-#define GetPlayers_ExcludeAlive         
-#define FindPlayer_MatchUserId		    "k"
-#define engine_changelevel(%1)          server_cmd("changelevel %s", %1)
-#endif
 
 #define IsValidUserIndex(%1)            (1 <= (%1) <= MaxClients)
 
@@ -104,21 +87,12 @@ public plugin_init()
     if(!is_running("svencoop"))
         set_fail_state("[AMXX] Sven Co-op Nextmapper & Anti-Rush can only run in Sven Co-op!");
 
-    #if AMXX_VERSION_NUM < 183
-    g_cvarEnabled = register_cvar("amx_sven_nextmapper_enabled", "1");
-    g_cvarAntiRush = register_cvar("amx_sven_antirush_enabled", "1");
-    g_cvarAntiRushWaitStart = register_cvar("amx_sven_antirush_wait_start", "30.0");
-    g_cvarAntiRushWaitStartAmount = register_cvar("amx_sven_antirush_wait_start_amount", "-1");
-    g_cvarAntiRushWaitEnd = register_cvar("amx_sven_antirush_wait_end", "60.0");
-    g_cvarAntiRushWaitEndPercentage = register_cvar("amx_sven_antirush_end_percentage", "80.0");
-    #else 
     g_cvarEnabled = create_cvar("amx_sven_nextmapper_enabled", "1", FCVAR_NONE, "Enables the Plugin", true, 0.0, true, 1.0);
     g_cvarAntiRush = create_cvar("amx_sven_antirush_enabled", "1", FCVAR_NONE, "Determines if the plugin should activate the anti-rush functionality.", true, 0.0, true, 1.0);
-    g_cvarAntiRushWaitStart = create_cvar("amx_sven_antirush_wait_start", "30.0", FCVAR_NONE, "How many seconds a map should wait before letting people play.", true, 0.0);
+    g_cvarAntiRushWaitStart = create_cvar("amx_sven_antirush_wait_start", "60.0", FCVAR_NONE, "How many seconds a map should wait before letting people play.", true, 0.0);
     g_cvarAntiRushWaitStartAmount = create_cvar("amx_sven_antirush_wait_start_amount", "-1", FCVAR_NONE, "How many players must be connected to start immediately. 0 to disable, -1 to use the amount of players of the previous map when it ended.", true, -1.0, true, 32.0);
     g_cvarAntiRushWaitEnd = create_cvar("amx_sven_antirush_wait_end", "60.0", FCVAR_NONE, "How many seconds a map should wait before changing should a player reaches the end.", true, 0.0);
     g_cvarAntiRushWaitEndPercentage = create_cvar("amx_sven_antirush_end_percentage", "80.0", FCVAR_NONE, "How many people (%) should reach the end to immediately change the map.", true, 0.0, true, 100.0);
-    #endif
 
     AutoExecConfig();
 
@@ -161,21 +135,12 @@ public plugin_cfg()
     if(g_iPluginFlags & AMX_FLAG_DEBUG)
         server_print("[DEBUG] %s::plugin_cfg() - Called", __BINARY__);
 
-    #if AMXX_VERSION_NUM < 183
-    g_bPluginEnabled = get_pcvar_bool(g_cvarEnabled);
-    g_bAntiRushEnabled = get_pcvar_bool(g_cvarAntiRush);
-    g_fAntiRushWaitStart = get_pcvar_float(g_cvarAntiRushWaitStart);
-    g_iAntiRushWaitStartAmount = get_pcvar_num(g_cvarAntiRushWaitStartAmount);
-    g_fAntiRushWaitEnd = get_pcvar_float(g_cvarAntiRushWaitEnd);
-    g_fAntiRushWaitEndPercentage = get_pcvar_float(g_cvarAntiRushWaitEndPercentage);
-    #else
     bind_pcvar_num(g_cvarEnabled, g_bPluginEnabled);
     bind_pcvar_num(g_cvarAntiRush, g_bAntiRushEnabled);
     bind_pcvar_float(g_cvarAntiRushWaitStart, g_fAntiRushWaitStart);
     bind_pcvar_num(g_cvarAntiRushWaitStartAmount, g_iAntiRushWaitStartAmount);
     bind_pcvar_float(g_cvarAntiRushWaitEnd, g_fAntiRushWaitEnd);
     bind_pcvar_float(g_cvarAntiRushWaitEndPercentage, g_fAntiRushWaitEndPercentage);
-    #endif
 
     if(g_bPluginEnabled)
     {
@@ -205,7 +170,7 @@ public plugin_cfg()
 
                     if(is_map_valid(g_sDesiredNextMap))
                     {
-                        RegisterHam(Ham_Use, GAMEEND_CLASSNAME, "LevelEnd_ByUse");
+                        RegisterHam(Ham_Use, GAMEEND_CLASSNAME, "HamForward_GameEndUse_Pre");
 
                         new iEnt = -1;
 
@@ -253,14 +218,14 @@ public plugin_cfg()
 
         if(g_bAntiRushEnabled)
         {
-            RegisterHam(Ham_Use, CHANGELEVEL_CLASSNAME, "LevelEnd_ByUse");
-            RegisterHam(Ham_Touch, CHANGELEVEL_CLASSNAME, "LevelEnd_ByTouch");
-            RegisterHam(Ham_Touch, BEACON_ENTNAME, "LevelEnd_ByTouchBeaconPlayer");
+            RegisterHam(Ham_Use, CHANGELEVEL_CLASSNAME, "HamForward_GameEndUse_Pre");
+            RegisterHam(Ham_Touch, CHANGELEVEL_CLASSNAME, "HamForward_GameEndTouch_Pre");
+            RegisterHam(Ham_Touch, BEACON_ENTNAME, "HamForward_MultipleTouch_Pre");
 
             if(g_iPluginFlags & AMX_FLAG_DEBUG)
                 server_print("[DEBUG] %s::plugin_cfg() - Registering hooks.", __BINARY__);
 
-            RegisterHam(Ham_Spawn, "player", "Event_PlayerSpawn_Pre");
+            RegisterHam(Ham_Spawn, "player", "HamForward_PlayerSpawn_Pre");
 
             if(g_iPluginFlags & AMX_FLAG_DEBUG)
                 server_print("[DEBUG] %s::plugin_cfg() - Setting g_hMapState to ANTIRUSH_STATE_PRE_INIT.", __BINARY__);
@@ -270,16 +235,12 @@ public plugin_cfg()
             if(g_iPluginFlags & AMX_FLAG_DEBUG)
                 server_print("[DEBUG] %s::plugin_cfg() - Running clock.", __BINARY__);
 
-            server_print("[DEBUG] %s::plugin_cfg() - Setting g_iWaitForPlayers.", __BINARY__);
-
             if(g_iAntiRushWaitStartAmount > 0)
                 g_iWaitForPlayers = g_iAntiRushWaitStartAmount;
             else if(g_iAntiRushWaitStartAmount == -1)
                 g_iWaitForPlayers = read_player_count_from_file();
             else 
                 g_iWaitForPlayers = -1;
-
-            server_print("[DEBUG] %s::plugin_cfg() - g_iWaitForPlayers is %d", __BINARY__, g_iWaitForPlayers);
 
             set_task(1.0, "Task_ClockFunction", TASKID_CLOCKFUNCTION, _, _, "b");
 
@@ -291,8 +252,6 @@ public plugin_cfg()
 public OnConfigsExecuted()
 {
     register_cvar("amx_sven_nextmapper_version", PLUGIN_VERSION, FCVAR_SERVER);
-    
-    server_print("[NOTICE] %s::OnConfigsExecuted() - %s is free to download and distribute! If you paid for this plugin YOU GOT SCAMMED. Visit https://github.com/szGabu for all my plugins.", __BINARY__, PLUGIN_NAME);
 }
 
 public pfn_keyvalue(iEnt)
@@ -305,11 +264,8 @@ public pfn_keyvalue(iEnt)
         {
             new szMapPath[PLATFORM_MAX_PATH];
             formatex(szMapPath, charsmax(szMapPath), "maps/%s.bsp", szKeyValue);
-            #if AMXX_VERSION_NUM < 183
-            new bFileExists = file_exists(szMapPath);
-            #else 
             new bFileExists = file_exists(szMapPath, true);
-            #endif
+
             if(!bFileExists)
             {
                 server_print("[ALERT] %s::pfn_keyvalue() - Map ^"%s.bsp^" missing from the maps folder. Exit will be treated as 'game_end'", __BINARY__, szKeyValue);
@@ -323,7 +279,7 @@ public pfn_keyvalue(iEnt)
     }
 }
 
-public client_disconnect(iClient)
+public client_disconnected(iClient)
 {
     if(!g_bAntiRushEnabled)
         return;
@@ -383,11 +339,7 @@ public PlayerCmd_Suicide(iClient)
 
 public Task_RecheckPlayerCountOnLeft()
 {
-    #if AMXX_VERSION_NUM < 183
-    new iPlayerCount = get_playersnum(true);
-    #else
     new iPlayerCount = get_playersnum_ex(GetPlayers_IncludeConnecting);
-    #endif
     
     if(iPlayerCount == 0 && g_hMapState == ANTIRUSH_STATE_MIDGAME)
     {
@@ -457,6 +409,7 @@ Player_CreateTransitionBeacon(iClient, iExit)
     set_pev(g_hBeaconEnt[iClient], pev_classname, BEACON_CLASSNAME);
     set_pev(g_hBeaconEnt[iClient], pev_owner, iExit);
     set_pev(g_hBeaconEnt[iClient], pev_iuser1, iClient);
+    set_pev(g_hBeaconEnt[iClient], pev_iuser4, FL_PLAYERBEACON);
 
     engfunc(EngFunc_SetModel, g_hBeaconEnt[iClient], "models/w_crowbar.mdl");
 
@@ -480,7 +433,7 @@ Player_CreateTransitionBeacon(iClient, iExit)
 
     if(!g_bBeaconThinkHook)
     {
-        RegisterHam(Ham_Think, BEACON_ENTNAME, "Event_BeaconThink");
+        RegisterHam(Ham_Think, BEACON_ENTNAME, "HamForward_MultipleThink_Pre");
         g_bBeaconThinkHook = true;
     }
 
@@ -488,16 +441,16 @@ Player_CreateTransitionBeacon(iClient, iExit)
         server_print("[DEBUG] %s::Player_CreateTransitionBeacon() - Successfully created beacon: %d", __BINARY__, g_hBeaconEnt[iClient]);
 }
 
-public LevelEnd_ByTouch(iEnt, iOther)
+public HamForward_GameEndTouch_Pre(iEnt, iOther)
 {
-    if(!is_user_connected2(iOther))
+    if(!is_user_connected(iOther))
         return HAM_IGNORED;
 
     //blocked back transition
     if(pev(iEnt, pev_solid) == SOLID_BSP) 
     {
         if(g_iPluginFlags & AMX_FLAG_DEBUG)
-            server_print("[DEBUG] %s::LevelEnd_ByTouch() - Player %N wanted to touch a solid changelevel block", __BINARY__, iOther);
+            server_print("[DEBUG] %s::HamForward_GameEndTouch_Pre() - Player %N wanted to touch a solid changelevel block", __BINARY__, iOther);
 
         return HAM_IGNORED;
     }
@@ -512,9 +465,9 @@ public LevelEnd_ByTouch(iEnt, iOther)
             
             if(g_iPluginFlags & AMX_FLAG_DEBUG)
             {
-                server_print("[DEBUG] %s::LevelEnd_ByTouch() - g_hPlayerState[%d] is %d", __BINARY__, iOther, g_hPlayerState[iOther]);
-                server_print("[DEBUG] %s::LevelEnd_ByTouch() - g_hMapState is ANTIRUSH_STATE_MIDGAME", __BINARY__);
-                server_print("[DEBUG] %s::LevelEnd_ByTouch() - Setting g_hMapState to ANTIRUSH_STATE_END", __BINARY__);
+                server_print("[DEBUG] %s::HamForward_GameEndTouch_Pre() - g_hPlayerState[%d] is %d", __BINARY__, iOther, g_hPlayerState[iOther]);
+                server_print("[DEBUG] %s::HamForward_GameEndTouch_Pre() - g_hMapState is ANTIRUSH_STATE_MIDGAME", __BINARY__);
+                server_print("[DEBUG] %s::HamForward_GameEndTouch_Pre() - Setting g_hMapState to ANTIRUSH_STATE_END", __BINARY__);
             }
 
             g_hMapState = ANTIRUSH_STATE_END;
@@ -524,7 +477,7 @@ public LevelEnd_ByTouch(iEnt, iOther)
         if(g_hPlayerState[iOther] == -1)
         {
             if(g_iPluginFlags & AMX_FLAG_DEBUG)
-                server_print("[DEBUG] %s::LevelEnd_ByTouch() - Going to call PlayerReachedEndMap(%d, %d, false)", __BINARY__, iOther, iEnt, false);
+                server_print("[DEBUG] %s::HamForward_GameEndTouch_Pre() - Going to call PlayerReachedEndMap(%d, %d, false)", __BINARY__, iOther, iEnt, false);
 
             PlayerReachedEndMap(iOther, iEnt, false);
         }
@@ -535,19 +488,20 @@ public LevelEnd_ByTouch(iEnt, iOther)
     return HAM_IGNORED;
 }
 
-public LevelEnd_ByTouchBeaconPlayer(iEnt, iOther)
+public HamForward_MultipleTouch_Pre(iEnt, iOther)
 {
-    if(pev(iEnt, pev_flags, FL_PLAYERBEACON) && iOther >= 0 && iOther <= MaxClients)
+    if(pev(iEnt, pev_iuser4) & FL_PLAYERBEACON && iOther >= 0 && iOther <= MaxClients)
     {
         if(g_iPluginFlags & AMX_FLAG_DEBUG)
-            server_print("[DEBUG] %s::LevelEnd_ByTouchBeaconPlayer() - Called on %d (toucher: %N)", __BINARY__, iEnt, iOther);
+            server_print("[DEBUG] %s::HamForward_MultipleTouch_Pre() - Called on %d (toucher: %N). iEnt iUser4 value: %d", __BINARY__, iEnt, iOther, pev(iEnt, pev_iuser4));
 
         if(g_hMapState == ANTIRUSH_STATE_END)
         {
             if(g_hPlayerState[iOther] == 0)
             {
-                if(pev(iEnt, pev_owner) > 0 && g_hPlayerState[iOther] == -1)
-                    PlayerReachedEndMap(iOther, pev(iEnt, pev_owner), false);
+                new iExit = pev(iEnt, pev_owner);
+                if(iExit > 0 && g_hPlayerState[iOther] == -1)
+                    PlayerReachedEndMap(iOther, iExit, false);
             }
         }
     }
@@ -555,12 +509,12 @@ public LevelEnd_ByTouchBeaconPlayer(iEnt, iOther)
     return HAM_IGNORED;
 }
 
-public Event_BeaconThink(iEnt)
+public HamForward_MultipleThink_Pre(iEnt)
 {
-    if(pev(iEnt, pev_flags, FL_PLAYERBEACON))
+    if(pev(iEnt, pev_iuser4, FL_PLAYERBEACON))
     {
         new iBeaconClient = pev(iEnt, pev_iuser1);
-        if(is_user_connected2(iBeaconClient))
+        if(is_user_connected(iBeaconClient))
         {
             new Float:fOrigin[3];
             pev(iBeaconClient, pev_origin, fOrigin);
@@ -581,7 +535,7 @@ public Event_BeaconThink(iEnt)
     }
 }
 
-public LevelEnd_ByUse(iEnt, iCaller, iActivator, iUseType, Float:fValue)
+public HamForward_GameEndUse_Pre(iEnt, iCaller, iActivator, iUseType, Float:fValue)
 {
     if(!pev_valid(iEnt) || !pev_valid(iCaller))
         return HAM_IGNORED;
@@ -599,9 +553,9 @@ public LevelEnd_ByUse(iEnt, iCaller, iActivator, iUseType, Float:fValue)
 
             if(g_iPluginFlags & AMX_FLAG_DEBUG)
             {
-                server_print("[DEBUG] %s::LevelEnd_ByUse() - g_hPlayerState[%d] is %d", __BINARY__, iCaller, g_hPlayerState[iCaller]);
-                server_print("[DEBUG] %s::LevelEnd_ByUse() - g_hMapState is ANTIRUSH_STATE_MIDGAME", __BINARY__);
-                server_print("[DEBUG] %s::LevelEnd_ByUse() - Setting g_hMapState to ANTIRUSH_STATE_END", __BINARY__);
+                server_print("[DEBUG] %s::HamForward_GameEndUse_Pre() - g_hPlayerState[%d] is %d", __BINARY__, iCaller, g_hPlayerState[iCaller]);
+                server_print("[DEBUG] %s::HamForward_GameEndUse_Pre() - g_hMapState is ANTIRUSH_STATE_MIDGAME", __BINARY__);
+                server_print("[DEBUG] %s::HamForward_GameEndUse_Pre() - Setting g_hMapState to ANTIRUSH_STATE_END", __BINARY__);
             }
 
             g_hMapState = ANTIRUSH_STATE_END;
@@ -615,7 +569,7 @@ public LevelEnd_ByUse(iEnt, iCaller, iActivator, iUseType, Float:fValue)
             pev(iEnt, pev_classname, sClassname, charsmax(sClassname));
 
             if(g_iPluginFlags & AMX_FLAG_DEBUG)
-                server_print("[DEBUG] %s::LevelEnd_ByUse() - classname: %s", __BINARY__, sClassname);
+                server_print("[DEBUG] %s::HamForward_GameEndUse_Pre() - classname: %s", __BINARY__, sClassname);
         }
         return HAM_SUPERCEDE;
     }
@@ -624,7 +578,7 @@ public LevelEnd_ByUse(iEnt, iCaller, iActivator, iUseType, Float:fValue)
     if(g_bOldMap)
     {
         if(g_iPluginFlags & AMX_FLAG_DEBUG)
-            server_print("[DEBUG] %s::LevelEnd_ByUse() - This is an old map and the previous conditons didn't met. Changing to %s", __BINARY__,  g_sDesiredNextMap);
+            server_print("[DEBUG] %s::HamForward_GameEndUse_Pre() - This is an old map and the previous conditons didn't met. Changing to %s", __BINARY__,  g_sDesiredNextMap);
 
         engine_changelevel(g_sDesiredNextMap);
     }
@@ -653,7 +607,7 @@ public Task_ClockFunction()
                 g_hMapState = ANTIRUSH_STATE_MIDGAME;
                 g_fSecondsPassed = 0.0;
 
-                FadeOut();
+                SpawnNow();
 
                 if(g_bThirdPartySurvivalEnabled)
                     server_cmd("amx_survival_activate_now");
@@ -663,7 +617,7 @@ public Task_ClockFunction()
 
             for(new iClient=1;iClient <= MaxClients;iClient++)
             {
-                if(is_user_connected2(iClient))
+                if(is_user_connected(iClient))
                 {
                     message_begin(MSG_ONE, g_hScreenFadeMessage, {0, 0, 0}, iClient);
                     write_short(0);
@@ -710,11 +664,7 @@ public Task_ClockFunction()
             //     return;
             // }
 
-            #if AMXX_VERSION_NUM < 183
-            new iLimboPercentage = (GetPlayersInLimbo()*100)/get_playersnum2(true);
-            #else
             new iLimboPercentage = (GetPlayersInLimbo()*100)/get_playersnum_ex(GetPlayers_ExcludeDead);
-            #endif
 
             if(g_iPluginFlags & AMX_FLAG_DEBUG)
                 server_print("[DEBUG] %s::Task_ClockFunction() - percentage of players in limbo %d%%", __BINARY__, iLimboPercentage);
@@ -749,11 +699,11 @@ public Task_ClockFunction()
  *
  * @return void
  */
-FadeOut()
+stock SpawnNow()
 {
     for(new iClient = 1; iClient <= MaxClients; iClient++)
     {
-        if(is_user_connected2(iClient))
+        if(pev_valid(iClient) == 2)
         {
             client_print(iClient, print_center, "");
             message_begin(MSG_ONE, g_hScreenFadeMessage, _, iClient);
@@ -766,7 +716,7 @@ FadeOut()
             write_byte(0);
             message_end();
 
-            set_pev(iClient, pev_flags, pev(iClient, pev_flags) & ~(FL_FROZEN | FL_GODMODE | FL_NOTARGET));
+            ExecuteHamB(Ham_Spawn, iClient);
         }
     }
 }
@@ -824,7 +774,7 @@ public end_map()
         new iUser = 0;
         for(new iClient=1;iClient <= MaxClients;iClient++)
         {
-            if(is_user_connected2(iClient) && is_user_alive(iClient))
+            if(is_user_connected(iClient) && is_user_alive(iClient))
             {
                 iUser = iClient;
                 break;
@@ -838,7 +788,7 @@ public end_map()
 
             for(new iClient=1;iClient <= MaxClients;iClient++)
             {
-                if(is_user_connected2(iClient) && is_user_alive(iClient))
+                if(is_user_connected(iClient) && is_user_alive(iClient))
                 {
                     set_pev(iClient, pev_flags, pev(iClient, pev_flags) & ~(FL_FROZEN | FL_GODMODE | FL_NOTARGET | FL_NOWEAPONS | FL_DORMANT));
                     set_pev(iClient, pev_solid, SOLID_SLIDEBOX);
@@ -866,27 +816,33 @@ public end_map()
     }
 }
 
-public Event_PlayerSpawn_Pre(iClient)
+public HamForward_PlayerSpawn_Pre(iClient)
 {  
-    if(g_iPluginFlags & AMX_FLAG_DEBUG)
+    if(iClient)
     {
-        server_print("[DEBUG] %s::Event_PlayerSpawn_Pre() - Called on Player %d", __BINARY__, iClient);
-        server_print("[DEBUG] %s::Event_PlayerSpawn_Pre() - Value of g_bShouldSpawnNormally is %b", __BINARY__,  g_bShouldSpawnNormally);
-    }
+        if(g_iPluginFlags & AMX_FLAG_DEBUG)
+        {
+            server_print("[DEBUG] %s::HamForward_PlayerSpawn_Pre() - Called on Player %d", __BINARY__, iClient);
+            server_print("[DEBUG] %s::HamForward_PlayerSpawn_Pre() - Value of g_bShouldSpawnNormally is %b", __BINARY__,  g_bShouldSpawnNormally);
+        }
+
+        if(!g_bShouldSpawnNormally)
+            return HAM_SUPERCEDE;
         
-    set_task(TECHNICAL_IMMEDIATE, "Task_AttemptFreezePlayer", TASKID_FREEZEPLAYER + get_user_userid(iClient));
+        //RequestFrame("FrameNext_AttemptFreezePlayer", TASKID_FREEZEPLAYER + get_user_userid(iClient));
+    }
 
     return HAM_IGNORED;
 }
 
-public Task_AttemptFreezePlayer(iTaskId)
+public FrameNext_AttemptFreezePlayer(iTaskId)
 {
     new iUserId = iTaskId - TASKID_FREEZEPLAYER;
     new iClient = find_player_ex(FindPlayer_MatchUserId, iUserId);
-    if(iClient && is_user_connected2(iClient) && !g_bShouldSpawnNormally)
+    if(iClient && is_user_connected(iClient) && !g_bShouldSpawnNormally)
     {
         if(g_iPluginFlags & AMX_FLAG_DEBUG)
-            server_print("[DEBUG] %s::Task_AttemptFreezePlayer() - Called on Player %d", __BINARY__, iClient);
+            server_print("[DEBUG] %s::FrameNext_AttemptFreezePlayer() - Called on Player %d", __BINARY__, iClient);
         
         set_pev(iClient, pev_flags, pev(iClient, pev_flags) | FL_FROZEN | FL_GODMODE | FL_NOTARGET);
     }
@@ -897,35 +853,10 @@ stock GetPlayersInLimbo()
     new iCount = 0;
     for(new iClient=1;iClient <= MaxClients;iClient++)
     {
-        if(is_user_connected2(iClient) && g_hPlayerState[iClient] > 0)
+        if(is_user_connected(iClient) && g_hPlayerState[iClient] > 0)
             iCount++;
     }
     return iCount;
-}
-
-#if AMXX_VERSION_NUM < 183
-stock get_playersnum2(bool:bAlive)
-{
-    new iCount = 0;
-    for(new iClient=1; iClient <= MaxClients;iClient++)
-    {
-        if(is_user_connected2(iClient) && ( (bAlive && is_user_alive(iClient)) || (!bAlive && !is_user_alive(iClient)) ))
-            iCount++;
-    }
-    return iCount;
-}
-#endif
-
-stock bool:is_user_connected2(iClient)
-{
-    #if AMXX_VERSION_NUM < 183
-    return is_user_connected(iClient) == 1;
-    #else
-    if(IsValidUserIndex(iClient) && pev_valid(iClient) == 2)
-        return bool:ExecuteHam(Ham_SC_Player_IsConnected, iClient);
-    else
-        return false;
-    #endif
 }
 
 #define PLAYERCOUNT_DATA_FILE "player_count.dat"
@@ -938,13 +869,8 @@ stock read_player_count_from_file()
     get_configsdir(szConfigDir, charsmax(szConfigDir));
     formatex(szFilePath, charsmax(szFilePath), "%s/%s", szConfigDir, PLAYERCOUNT_DATA_FILE);
     
-    #if AMXX_VERSION_NUM < 183
-    if (!file_exists(szFilePath))
-        return 0;
-    #else 
     if (!file_exists(szFilePath, true))
         return 0;
-    #endif
     
     new iFile = fopen(szFilePath, "r");
     if (!iFile)
@@ -957,11 +883,7 @@ stock read_player_count_from_file()
     if (fgets(iFile, szBuffer, charsmax(szBuffer)))
     {
         fclose(iFile);
-        #if AMXX_VERSION_NUM < 183
-        delete_file(szFilePath);
-        #else 
         delete_file(szFilePath, true);
-        #endif
         return str_to_num(szBuffer);
     } 
 
